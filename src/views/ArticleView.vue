@@ -72,6 +72,7 @@ onMounted(() => {
             text-align: center;
             padding: 10px;
             border-style: solid;
+            margin-bottom: 1.5rem;
         }
         .article-meta {
             display: flex;
@@ -85,8 +86,8 @@ onMounted(() => {
             box-shadow: 0 4px 12px rgba(0,0,0,0.2);
             
             code {
-                font-family: 'Fira Code', monospace;
-                font-size: 0.8rem;
+                font-family:'Courier New', Courier, monospace;
+                font-size: 0.9rem;
                 line-height: 1.5;
             }
         }
