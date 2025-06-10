@@ -1,0 +1,62 @@
+<h2 class="article-title">Настройка сервера Linux (Ubuntu)</h2>
+<div class="article-meta">
+    <span>🗓 15 Марта 2025</span>
+    <span>🏷️ Linux Ubuntu, DevOps, Docker, Nginx</span>
+</div>
+<pre><code class="language-bash">sudo apt-get install -y vim mosh tmux htop git curl wget unzip zip gcc \
+build-essential make ssh apt-transport-https ca-certificates software-properties-common zsh tree \
+redis-server nginx zlib1g-dev libbz2-dev libreadline-dev llvm libncurses-dev xz-utils tk-dev \
+liblzma-dev python3-dev python3-lxml libxslt1-dev libffi-dev libssl-dev gnumeric libsqlite3-dev \
+libpq-dev libxml2-dev libxslt1-dev libjpeg-dev libfreetype-dev libcurl4-openssl-dev supervisor</code></pre>
+<h3 class="section-title" id="ssh_fail2ban">Настройка SSH и fail2ban</h3>
+<p>Необходимы для нормального доступа к серверу и защиты от ддос атак</p>
+<pre><code class="lang-bash">nano /etc/ssh/sshd_config</code></pre>
+<pre><code class="lang-bash">AllowUsers &lt;username&gt;
+PermitRootLogin no
+PasswordAuthentication no
+PubkeyAuthentication yes
+X11Forwarding no
+PermitEmptyPasswords no</code></pre>
+<pre><code class="lang-bash">sudo apt install fail2ban
+sudo nano /etc/fail2ban/jail.local</code></pre>
+<pre><code class="lang-bash">[sshd]
+enabled = true
+maxretry = 3
+findtime = 10m
+bantime = 1h</code></pre>
+<p>Положить публичный и приватный (при необходимости) ключ в ~/.ssh</p>
+<pre><code class="lang-bash">sudo systemctl restart sshd</code></pre>
+<h3 class="section-title" id="oh-my">Oh-my-ZSH</h3>
+<pre><code class="lang-bash">sudo apt install zsh
+chsh -s $(which zsh)
+
+sh -c "$(curl -fsSL https://raw.githubusercontent.com/robbyrussell/oh-my-zsh/master/tools/install.sh)"
+git clone https://github.com/zsh-users/zsh-syntax-highlighting.git \
+    ${ZSH_CUSTOM:-~/.oh-my-zsh/custom}/plugins/zsh-syntax-highlighting
+git clone https://github.com/zsh-users/zsh-autosuggestions \
+    ${ZSH_CUSTOM:-~/.oh-my-zsh/custom}/plugins/zsh-autosuggestions
+git clone --depth=1 https://github.com/romkatv/powerlevel10k.git \
+    "${ZSH_CUSTOM:-$HOME/.oh-my-zsh/custom}/themes/powerlevel10k"</code></pre>
+<p>Добавить <b>zsh-syntax-highlighting zsh-autosuggestions docker docker-compose</b> в ~/.zshrc в plugins</p>
+<p>Добавить <b>powerlevel10k/powerlevel10k</b> в ~/.zshrc <b>ZSH_THEME</b></p>
+<h3 class="section-title" id="nginx">Nginx</h3>
+<pre><code class="lang-bash">sudo apt install ufw
+sudo nano /etc/ufw/applications.d/nginx.ini</code></pre>
+<pre><code class="lang-bash">[Nginx HTTP]
+title=Web Server
+description=Enable NGINX HTTP traffic
+ports=80/tcp
+
+[Nginx HTTPS]
+title=Web Server (HTTPS)
+description=Enable NGINX HTTPS traffic
+ports=443/tcp
+
+[Nginx Full]
+title=Web Server (HTTP,HTTPS)
+description=Enable NGINX HTTP and HTTPS traffic
+ports=80,443/tcp</code></pre>
+<pre><code class="lang-bash">sudo ufw enable
+sudo ufw allow 'Nginx Full'
+sudo ufw allow 'OpenSSH'
+sudo ufw status</code></pre>

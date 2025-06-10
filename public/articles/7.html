@@ -1,0 +1,955 @@
+<h2 class="article-title">Go. Статья. Проект REST API (URL-Shortener)</h2>
+<div class="article-meta">
+    <span>🗓 15 мая 2025</span>
+    <span>🏷️ Go, REST API</span>
+</div>
+<div style="text-align: right;">
+    <p>Черпал вдохновение из: <a href="https://habr.com/ru/companies/selectel/articles/747738">Статья на habr</a></p>
+</div>
+<p>В статье описан процесс написания полноценного REST API сервиса — URL Shortener.</p>
+<ul>
+    <li>Выберем актуальный http-роутер</li>
+    <li>Позаботимся о логах</li>
+    <li>(???) Напишем тесты: unit-тесты, тесты хэндлеров и функциональные</li>
+    <li>(???) Настроим деплой</li>
+</ul>
+<p>Для проекта нам понадобятся несколько основных библиотек:</p>
+<ul>
+    <li><b>go-chi/chi</b> — для обработки HTTP-запросов</li>
+    <li><b>slog</b> — для логирования</li>
+    <li><b>stretchr/testify</b> — для покрытия проекта тестами</li>
+    <li><b>ilyakaznacheev/cleanenv</b> — для конфигурирования</li>
+    <li><b>SQLite</b> — для хранения данных, СУБД.</li>
+</ul>
+<h3 id="conf" class="section-title">Конфигурация приложения</h3>
+<p>Создадим папку url-shortener. В ней выполним команду:</p>
+<pre><code class="lang-bash">go mod init url-shortener</code></pre>
+<p>Создастся файл go.mod. Для запуска проекта создаем папку cmd/ - там должны располгаться различные команды для запуска необходимых действий с проектом, например очистка, крон, операции и пр. Там создаем папку url-shortener (запуск самого проекта) и в ней файл main.go. Опишем стандартный main.go, так же проставим TODO:</p>
+<pre><code class="lang-go">package main
+
+func main() {
+	// TODO: init config - cleanenv
+	// TODO: init logger - slog import slog/log
+	// TODO: init storage - SQLite3
+	// TODO: init router - chi, "chi render"
+	// TODO: run server
+}</code></pre>
+<p>Файлы конфигурации .yaml будем хранить в папке config. Туда положим файл local.yaml - для локального конфига.</p>
+<pre><code class=lang-bash># config/local.yaml
+
+env: "local"                          # Окружение - local, dev или prod
+storage_path: "./storage/storage.db"  # Файл, в котором будет храниться наша БД
+http_server:                          # Конфигурация нашего http-сервера
+    address: "localhost:8081"
+    timeout: 4s                       # Время на ответ сервера
+    idle_timeout: 30s                 # Время жизни соединения</code></pre>
+<p>Установим сам cleanenv с помощью команды:</p>
+<pre><code class=lang-bash>go get -u github.com/ilyakaznacheev/cleanenv</code></pre>
+<p>Для всех внутренних "кишок" создаем папку internal. В ней папку config, в ней файл config.go (в нем заведем структуры, в которые будем анмаршалить конфигурационный файл):</p>
+<pre><code class=lang-go>// internal/config/config.go
+package config
+
+import (
+	"log"
+	"os"
+	"time"
+
+	"github.com/ilyakaznacheev/cleanenv"
+)
+
+type Config struct {
+	Env         string `yaml:"env" env-default:"development"`
+	StoragePath string `yaml:"storage_path" env-required:"true"`
+	HTTPServer  `yaml:"http_server"`
+}
+
+type HTTPServer struct {
+	Address     string        `yaml:"address" env-default:"0.0.0.0:8080"`
+	Timeout     time.Duration `yaml:"timeout" env-default:"5s"`
+	IdleTimeout time.Duration `yaml:"idle_timeout" env-default:"60s"`
+}
+
+func MustLoad() *Config {
+	// Получаем путь до конфиг-файла из env-переменной CONFIG_PATH
+	// configPath := os.Getenv("CONFIG_PATH")
+    configPath := "./config/local.yaml"
+	if configPath == "" {
+		log.Fatal("CONFIG_PATH environment variable is not set")
+	}
+	// Проверяем существование конфиг-файла
+	if _, err := os.Stat(configPath); err != nil {
+		log.Fatalf("error opening config file: %s", err)
+	}
+	var cfg Config
+	// Читаем конфиг-файл и заполняем нашу структуру
+	err := cleanenv.ReadConfig(configPath, &cfg)
+	if err != nil {
+		log.Fatalf("error reading config file: %s", err)
+	}
+	return &cfg
+}</code></pre>
+<p>В main.go необходимо инициализировать конфиг (для проверки можно попровать вывести содержимое на консоль), заменив первый TODO на строку:</p>
+<pre><code class="lang-go">// cmd/url-shortener/main.go
+...
+cfg := config.MustLoad()
+// fmt.Printf("Конфиг: %s", cfg)
+...</code></pre>
+<p>Основная конфигурация завершена.</p>
+<h3 id="logging" class="section-title">Логирование</h3>
+<p>Конфиг есть, теперь соберем логгер. Использовать будем slog. Это очень гибкий пакет, и конкретная реализация может быть разной. Можно написать собственный хендлер (обработчик логов, который определяет, что происходит с записями), обернуть в него привычный логгер (например, zap или logrus) либо использовать дефолтные варианты, которые предоставляются вместе с пакетом. Используем последний вариант.</p>
+<p>С версии Go 1.21 slog входит в стандартную библиотеку. Из коробки в slog есть два вида хендлеров. Для локальной разработки подойдет TextHandler, а для деплоя лучше использовать JSONHandler, чтобы агрегатор логов (Kibana, Grafana, Loki и другие) мог его распарсить. Кроме того, важно учесть уровень логирования — это минимальный уровень сообщений, которые будут выводиться. К примеру, если установить уровень Info, то Debug-сообщения не увидим. Поэтому для локальной разработки и Dev-окружения лучше использовать уровень Debug, а для продакшена — Info.</p>
+<p>Инициализацию логера проводим в main.go - напишем константы возможных окружений и функцию setupLogger:</p>
+<pre><code class="lang-go">// cmd/url-shortener/main.go
+...
+const (
+    envLocal = "local"
+    envDev   = "dev"
+    envProd  = "prod"
+)
+...
+
+func setupLogger(env string) *slog.Logger {
+    // В зависимости от окружения эта функция создает логгер с разными
+    // параметрами — TextHandler / JSONHandler и уровень LevelDebug / LevelInfo.
+    var log *slog.Logger
+    switch env {
+    case envLocal:
+        log = slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}))
+    case envDev:
+        log = slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelDebug}))
+    case envProd:
+        log = slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
+    }
+    return log
+}</code></pre>
+<p>Теперь создадим сам логгер в main(), добавим параметр env с помощью метода log.With и выведем информацию о запуске приложения:</p>
+<pre><code class="lang-go">// cmd/url-shortener/main.go
+...
+func main() {
+    ...
+    log := setupLogger(cfg.Env)
+    // К каждому сообщению будет добавляться поле с информацией о текущем окружении
+    log = log.With(slog.String("env", cfg.Env))
+    // Помимо сообщения выведем параметр с адресом
+    log.Info("initializing server", slog.String("address", cfg.Address))
+    log.Debug("logger debug mode enabled")
+    ...
+}
+...</code></pre>
+<p>Помимо стандартных реализаций, нам все же придется написать одну свою — DiscardHandler. В таком виде логгер будет игнорировать все сообщения, которые мы в него отправляем, — это понадобится в тестах. Создадим пакет slogdiscard и имплементируем в нем интерфейс slog.Handler:</p>
+<pre><code class="lang-go">// internal/lib/logger/handlers/slogdiscard/slogdiscard.go
+package slogdiscard
+
+import (
+	"context"
+	"log/slog"
+)
+
+func NewDiscardLogger() *slog.Logger {
+	return slog.New(NewDiscardHandler())
+}
+
+type DiscardHandler struct{}
+
+func NewDiscardHandler() *DiscardHandler {
+	return &DiscardHandler{}
+}
+
+func (h *DiscardHandler) Handle(_ context.Context, _ slog.Record) error {
+	// Просто игнорируем запись журнала
+	return nil
+}
+
+func (h *DiscardHandler) WithAttrs(_ []slog.Attr) slog.Handler {
+	// Возвращает тот же обработчик, так как нет атрибутов для сохранения
+	return h
+}
+
+func (h *DiscardHandler) WithGroup(_ string) slog.Handler {
+	// Возвращает тот же обработчик, так как нет группы для сохранения
+	return h
+}
+
+func (h *DiscardHandler) Enabled(_ context.Context, _ slog.Level) bool {
+	// Всегда возвращает false, так как запись журнала игнорируется
+	return false
+}
+</code></pre>
+<p>Также создадим пакет sl (сокращенно от slog), в который добавим некоторые функции для работы с логгером. Они пригодятся в будущем.</p>
+<pre><code class="lang-go">// internal/lib/logger/sl/sl.go
+package sl
+
+import (
+	"log/slog"
+)
+
+func Err(err error) slog.Attr {
+	// Функция принимает ошибку, и возвращает атрибут пакета slog
+	return slog.Attr{
+		Key:   "error",
+		Value: slog.StringValue(err.Error()),
+	}
+}
+</code></pre>
+<p>Так же добавим handler для красивых цветных логов - просто потому что хочется. Установим пакет github.com/fatih/color:</p>
+<pre><code class="lang-bash">go get github.com/fatih/color</code></pre>
+<p>Создадим путь internal/lib/logger/handlers/slogpretty, положим файл slogpretty.go со следующим содержимым:</p>
+<pre><code class="lang-go">// internal/lib/logger/handlers/slogpretty/slogpretty.go
+package slogpretty
+
+import (
+	"context"
+	"encoding/json"
+	"io"
+	stdLog "log"
+	"log/slog"
+
+	"github.com/fatih/color"
+)
+
+type PrettyHandlerOptions struct {
+	SlogOpts *slog.HandlerOptions
+}
+
+type PrettyHandler struct {
+	opts PrettyHandlerOptions
+	slog.Handler
+	l     *stdLog.Logger
+	attrs []slog.Attr
+}
+
+func (opts PrettyHandlerOptions) NewPrettyHandler(out io.Writer) *PrettyHandler {
+	handler := &PrettyHandler{
+		Handler: slog.NewJSONHandler(out, opts.SlogOpts),
+		l:       stdLog.New(out, "", 0),
+	}
+	return handler
+}
+
+func (h *PrettyHandler) Handle(_ context.Context, r slog.Record) error {
+	level := r.Level.String() + ":"
+
+	switch r.Level {
+	case slog.LevelDebug:
+		level = color.MagentaString(level)
+	case slog.LevelInfo:
+		level = color.BlueString(level)
+	case slog.LevelWarn:
+		level = color.YellowString(level)
+	case slog.LevelError:
+		level = color.RedString(level)
+	}
+
+	fields := make(map[string]interface{}, r.NumAttrs())
+	r.Attrs(func(a slog.Attr) bool {
+		fields[a.Key] = a.Value.Any()
+		return true
+	})
+	for _, a := range h.attrs {
+		fields[a.Key] = a.Value.Any()
+	}
+
+	var b []byte
+	var err error
+	if len(fields) > 0 {
+		b, err = json.MarshalIndent(fields, "", "  ")
+		if err != nil {
+			return err
+		}
+	}
+
+	timeStr := r.Time.Format("[15:05:05.000]")
+	msg := color.CyanString(r.Message)
+	h.l.Println(
+		timeStr,
+		level,
+		msg,
+		color.WhiteString(string(b)),
+	)
+	return nil
+}
+
+func (h *PrettyHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
+	return &PrettyHandler{
+		Handler: h.Handler,
+		l:       h.l,
+		attrs:   attrs,
+	}
+}
+
+func (h *PrettyHandler) WithGroup(name string) slog.Handler {
+	return &PrettyHandler{
+		Handler: h.Handler.WithGroup(name),
+		l:       h.l,
+	}
+}
+</code></pre>
+<p>Для того, чтобы подключить, изменим в main() строки подключения логера для локальной среды через отдельную функцию:</p>
+<pre><code class="lang-go">// cmd/url-shortener/main.go
+...
+case envLocal:
+    log = setupPrettySlog()
+...
+
+...
+func setupPrettySlog() *slog.Logger {
+	opts := slogpretty.PrettyHandlerOptions{
+		SlogOpts: &slog.HandlerOptions{
+			Level: slog.LevelDebug,
+		},
+	}
+	handler := opts.NewPrettyHandler(os.Stdout)
+	return slog.New(handler)
+}
+...</code></pre>
+<h3 id="storage" class="section-title">Пишем storage</h3>
+<p>В папке internal создадим папку storage, в которой будем хранить какую-то общую реализацию для storage (в будущем возможно измненение БД, подключение новых и т.п. Могут быть различные реализации storage, но интерфейс один). В файле storage.go будет лишь базовый для всех имплементаций код. Сейчас такого кода мало — только информация о возможных ошибках:</p>
+<pre><code class="lang-go">// internal/storage/storage.go
+package storage
+
+import "errors"
+
+var (
+    ErrURLNotFound = errors.New("url not found")
+    ErrURLExists   = errors.New("url exists")
+)</code></pre>
+<p>Далее здесь же создаем папку sqlite, в которой будем писать код для этой СУБД. Если в будущем переедем на другой тип хранилища, просто создадим рядом соответствующую папку и напишем аналогичную реализацию. Таким образом, мы не будем привязываться к конкретной реализации.</p>
+<p>Теперь установим библиотеку для работы с sqlite и создадим структуру для объекта Storage. Опишем его конструктор.</p>
+<pre><code class="lang-bash">go get github.com/mattn/go-sqlite3</code></pre>
+<pre><code class="lang-go">// internal/storage/sqlite/sqlite.go
+package sqlite
+
+import (
+	"database/sql"
+	"fmt"
+
+    _ "github.com/mattn/go-sqlite3" // для инициализации sqlite3 драйвера
+)
+
+type Storage struct {
+	db *sql.DB
+}
+
+func New(storagePath string) (*Storage, error) {
+	const op = "storage.sqlite.NewStorage" // Имя текущей функции для логов и ошибок
+	db, err := sql.Open("sqlite3", storagePath) // Подключаемся к БД
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", op, err)
+	}
+	// Создаем таблицу, если ее еще нет
+	// (вообще тут нужен нормальный механизм миграций, но пока так сойдет)
+	stmt, err := db.Prepare(`
+    CREATE TABLE IF NOT EXISTS url(
+        id INTEGER PRIMARY KEY,
+        alias TEXT NOT NULL UNIQUE,
+        url TEXT NOT NULL);
+    CREATE INDEX IF NOT EXISTS idx_alias ON url(alias);
+    `)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", op, err)
+	}
+	_, err = stmt.Exec()
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", op, err)
+	}
+	return &Storage{db: db}, nil
+}</code></pre>
+<p>У нашего хранилища будет всего два метода — SaveURL() и GetURL() - реализуем их:</p>
+<pre><code class="lang-go">// internal/storage/sqlite/sqlite.go
+...
+func (s *Storage) SaveURL(urlToSave string, alias string) (int64, error) {
+    const op = "storage.sqlite.SaveURL"
+
+    // Подготавливаем запрос
+    stmt, err := s.db.Prepare("INSERT INTO url(url,alias) values(?,?)")
+    if err != nil {
+        return 0, fmt.Errorf("%s: prepare statement: %w", op, err)
+    }
+    // Выполняем запрос
+    res, err := stmt.Exec(urlToSave, alias)
+    if err != nil {
+        if sqliteErr, ok := err.(sqlite3.Error); ok && sqliteErr.ExtendedCode == sqlite3.ErrConstraintUnique {
+            return 0, fmt.Errorf("%s: %w", op, storage.ErrURLExists)
+        }
+
+        return 0, fmt.Errorf("%s: execute statement: %w", op, err)
+    }
+    // Получаем ID созданной записи
+    id, err := res.LastInsertId()
+    if err != nil {
+        return 0, fmt.Errorf("%s: failed to get last insert id: %w", op, err)
+    }
+    // Возвращаем ID
+    return id, nil
+}
+
+func (s *Storage) GetURL(alias string) (string, error) {
+    const op = "storage.sqlite.GetURL"
+
+    stmt, err := s.db.Prepare("SELECT url FROM url WHERE alias = ?")
+    if err != nil {
+        return "", fmt.Errorf("%s: prepare statement: %w", op, err)
+    }
+
+    var resURL string
+    err = stmt.QueryRow(alias).Scan(&resURL)
+    if errors.Is(err, sql.ErrNoRows) {
+        return "", storage.ErrURLNotFound
+    }
+    if err != nil {
+        return "", fmt.Errorf("%s: execute statement: %w", op, err)
+    }
+    return resURL, nil
+}
+...</code></pre>
+<p>Реализуем следующий TODO в main() - выполним подключение к БД:</p>
+<pre><code class="lang-go">// cmd/url-shortener/main.go
+...
+storage, err := sqlite.New(cfg.StoragePath)
+if err != nil {
+    log.Error("failed to initialize storage", sl.Err(err))
+...</code></pre>
+<p>Не забыть создать папку storage (из local.yaml) в корне проекта, где будет располагаться сама БД.</p>
+<h3 id="httpserver_setup" class="section-title">Подготовка HTTP сервера</h3>
+<p>Первым делом установим chi (маршрутизатор для http сервисов на Go):</p>
+<pre><code class="lang-bash">go get github.com/go-chi/chi/v5
+# пакет go-chi/render идет отдельно от роутера
+go get github.com/go-chi/render</code></pre>
+<p>В main() создадим объект роутера и подключим к нему необходимый middleware:</p>
+<pre><code class="lang-go">// cmd/url-shortener/main.go
+
+router := chi.NewRouter()
+// Все эти middleware доступны из коробки в пакете chi
+router.Use(middleware.RequestID)  // Добавляет request_id в каждый запрос, для трейсинга
+router.Use(middleware.Logger)     // Логирование всех запросов
+router.Use(middleware.Recoverer)  // Если где-то внутри обработчика запроса произойдет паника, приложение не упадет
+router.Use(middleware.URLFormat)  // Парсер URLов поступающих запросов</code></pre>
+<p>По умолчанию middleware.Logger использует свой собственный внутренний логгер, который желательно переопределить, чтобы использовался наш. Иначе могут возникнуть проблемы — например, со сбором логов. Либо можно написать собственный middleware для логирования запросов:</p>
+<pre><code class="lang-go">// internal/http-server/middleware/logger/logger.go
+package logger
+
+import (
+	"log/slog"
+	"net/http"
+	"time"
+
+	"github.com/go-chi/chi/v5/middleware"
+)
+
+func New(log *slog.Logger) func(next http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		log = log.With(slog.String("component", "middleware/logger"))
+		log.Info("logger middleware enabled")
+
+		// Код самого обработчика
+		fn := func(w http.ResponseWriter, r *http.Request) {
+			// Собираем исходную информацию о запросе
+			entry := log.With(
+				slog.String("method", r.Method),
+				slog.String("path", r.URL.Path),
+				slog.String("remote_addr", r.RemoteAddr),
+				slog.String("user_agent", r.UserAgent()),
+				slog.String("request_id", middleware.GetReqID(r.Context())),
+			)
+			// Создаем обертку вокруг `http.ResponseWriter`
+			// для получения сведений об ответе
+			ww := middleware.NewWrapResponseWriter(w, r.ProtoMajor)
+			// Момент получения запроса, чтобы вычислить время обработки
+			t1 := time.Now()
+			// Запись отправится в лог в defer
+			// в этот момент запрос уже будет обработан
+			defer func() {
+				entry.Info("request completed",
+					slog.Int("status", ww.Status()),
+					slog.Int("bytes", ww.BytesWritten()),
+					slog.String("duration", time.Since(t1).String()),
+				)
+			}()
+			// Передаем управление следующему обработчику в цепочке middleware
+			next.ServeHTTP(ww, r)
+		}
+		// Возвращаем созданный выше обработчик, приведя его к типу http.HandlerFunc
+		return http.HandlerFunc(fn)
+	}
+}</code></pre>
+<p>Подключается middleware следующим образом:</p>
+<pre><code class="lang-go">// cmd/url-shortener/main.go
+import (
+    ...
+    mwLogger "url-shortener/internal/http-server/middleware/logger"
+)
+...
+router := chi.NewRouter()
+router.Use(mwLogger.New(log))
+...</code></pre>
+<h3 id="handlers" class="section-title">Handlers — обработчики запросов</h3>
+<p>Наконец добрались до обработчиков запроса. Начнем с запроса на сохранение новой записи. Создаем папку internal/http-server/handlers/save и одноименный файл save.go. Заведем сразу две структуры — Request и Response. В первый будем анмаршалить запрос, а из второго формировать ответ. Также заведем константы, которыми будем заполнять поле Status:</p>
+<pre><code class="lang-go">// internal/http-server/handlers/url/save/save.go
+package save
+
+import (
+    resp "url-shortener/internal/lib/api/response"
+)
+
+type Request struct {
+	URL   string `json:"url" validate:"required,url"`
+	Alias string `json:"alias,omitempty"`
+}
+
+type Response struct {
+	resp.Response
+	Alias  string `json:"alias"`
+}
+</code></pre>
+<p>Зачем в ответе поле Alias: если в запросе он не был указан, то мы сгенерируем случайный, и клиент должен его узнать. Опытный глаз сразу заметит два привычных поля — Status и Error. Как и во многих других API-сервисах, эти поля могут присутствовать в ответе любого хэндлера. А раз так, то имеет смысл их вынести в общий пакет. В нашем случае он будет тут: internal/lib/api/response.</p>
+<pre><code class="lang-go">// internal/lib/api/response/response.go
+
+type Response struct {
+    Status string `json:"status"`
+    Error  string `json:"error,omitempty"`
+}
+
+const (
+    StatusOK    = "OK"
+    StatusError = "Error"
+)</code></pre>
+<p>Переходим к самому хендлеру. Для его получения будем использовать конструктор — функцию New:</p>
+<pre><code class="lang-go">// internal/http-server/handlers/url/save/save.go
+
+...
+func New(log *slog.Logger, urlSaver URLSaver) http.HandlerFunc {
+    return func(w http.ResponseWriter, r *http.Request) {
+        const op = "handlers.url.save.New"
+
+        // Добавляем к текущму объекту логгера поля op и request_id - упростить жизнь в будущем
+        log = log.With(
+            slog.String("op", op),
+            slog.String("request_id", middleware.GetReqID(r.Context())),
+        )
+
+        // Создаем объект запроса и анмаршаллим в него запрос
+        var req Request
+        err := render.DecodeJSON(r.Body, &req)
+        if errors.Is(err, io.EOF) {
+            // Такую ошибку встретим, если получили запрос с пустым телом - обработаем её отдельно
+            log.Error("request body is empty")
+            render.JSON(w, r, resp.Response{
+                Status: resp.StatusError,
+                Error:  "empty request",
+            })
+            return
+        }
+        if err != nil {
+            log.Error("failed to decode request body", sl.Err(err))
+            render.JSON(w, r, resp.Response{
+                Status: resp.StatusError,
+                Error:  "failed to decode request",
+            })
+            return
+        }
+
+        // Лучше больше логов, чем меньше - лишнее мы легко сможем почистить,
+        // при необходимости. А вот недостающую информацию мы уже не получим.
+        log.Info("request body decoded", slog.Any("req", req))
+    }
+}</code></pre>
+<p>Объект urlSaver передадим при создании хендлера из main.</p>
+<p>Этот код можно сделать немного красивее, если вынести повторяющийся код формирования объекта ответа в общую функцию. Напишем ее в том же пакете response:</p>
+<pre><code class="lang-go">// internal/lib/api/response/response.go
+
+...
+func Error(msg string) Response {
+    return Response{
+        Status: StatusError,
+        Error:  msg,
+    }
+}
+
+func OK() Response {
+    return Response{
+        Status: StatusOK,
+    }
+}</code></pre>
+<p>Теперь код в save.go будет выглядеть следующим образом:</p>
+<pre><code class="lang-go">// internal/http-server/handlers/url/save/save.go
+
+...
+err := render.DecodeJSON(r.Body, &req)
+if errors.Is(err, io.EOF) {
+    log.Error("request body is empty")
+    render.JSON(w, r, resp.Error("empty request"))
+    return
+}
+if err != nil {
+    log.Error("failed to decode request body", sl.Err(err))
+    render.JSON(w, r, resp.Error("failed to decode request"))
+    return
+}
+...</code></pre>
+<p>Далее нам нужно провалидировать запрос. Один из вариантов — сделать это вручную, проверив, что URL — это действительно URL, что он не пустой. Наш сервис очень маленький, поэтому такого метода вполне достаточно. Но в общем случае лучше использовать специализированный пакет, который сильно упрощает жизнь — например, go-playground/validator. Покажем, как им пользоваться.</p>
+<p>Вспоминаем про validate:«required,url» в объекте Request — он как раз будет использован валидатором. Для валидации нужно проделать следующее:</p>
+<pre><code class="lang-go">// internal/http-server/handlers/url/save/save.go
+
+func New(log *slog.Logger, urlSaver URLSaver) http.HandlerFunc {
+    return func(w http.ResponseWriter, r *http.Request) {
+        ...
+        // Создаем объект валидатора и передаем в него структуру, которую нужно провалидировать
+        if err := validator.New().Struct(req); err != nil {
+            // Приводим ошибку к типу ошибки валидации
+            validateErr := err.(validator.ValidationErrors)
+            log.Error("invalid request", sl.Err(err))
+            render.JSON(w, r, resp.Error(validateErr.Error()))
+            return
+        }
+    }
+}</code></pre>
+<p> В случае некорректного ввода данных, клиент получит такой ответ:</p>
+<pre><code class="lang-bash">{
+    "status": "Error",
+    "error": "Key: 'Request.URL' Error:Field validation for 'URL' failed on the 'url' tag"
+}</code></pre>
+<p>Для формирование более ясного ответа лучше добавить в пакет response такую функцию:</p>
+<pre><code class="lang-go">// internal/lib/api/response/response.go
+
+...
+func ValidationError(errs validator.ValidationErrors) Response {
+    var errMsgs []string
+
+    for _, err := range errs {
+        switch err.ActualTag() {
+        case "required":
+            errMsgs = append(errMsgs, fmt.Sprintf("field %s is a required field", err.Field()))
+        case "url":
+            errMsgs = append(errMsgs, fmt.Sprintf("field %s is not a valid URL", err.Field()))
+        default:
+            errMsgs = append(errMsgs, fmt.Sprintf("field %s is not valid", err.Field()))
+        }
+    }
+
+    return Response{
+        Status: StatusError,
+        Error:  strings.Join(errMsgs, ", "),
+    }
+}</code></pre>
+<p>Теперь обработчик вернет внятный ответ.</p>
+<pre><code class="lang-bash">{
+    "status": "Error",
+    "error": "field URL is not a valid URL"
+}</code></pre>
+<p>Alias проверяем вручную. Если он пустой — генерируем случайный:</p>
+<pre><code class="lang-go">// internal/http-server/handlers/url/save/save.go
+
+//go:generate moq -out save_mock.go . URLSaver
+type URLSaver interface {
+	SaveURL(URL, alias string) (int64, error)
+}
+
+const aliasLength = 6 // TODO: перенести в конфиг приложения
+
+func New(log *slog.Logger, urlSaver URLSaver) http.HandlerFunc {
+    return func(w http.ResponseWriter, r *http.Request) {
+        ...
+        alias := req.Alias
+        if alias == "" {
+            alias = random.NewRandomString(aliasLength)
+        }
+    }
+}</code></pre>
+<p>Можно сгенерировать строку своими методами либо использовать для этого готовую библиотеку. Используем random, в котором реализована функция NewRandomString:</p>
+<pre><code class="lang-go">// internal/lib/random/random.go
+package random
+
+import (
+	"math/rand"
+	"time"
+)
+
+func NewRandomString(size int) string {
+	rnd := rand.New(rand.NewSource(time.Now().UnixNano()))
+
+	chars := []rune("ABCDEFGHIJKLMNOPQRSTUVWXYZ" +
+		"abcdefghijklmnopqrstuvwxyz" +
+		"0123456789")
+
+	b := make([]rune, size)
+	for i := range b {
+		b[i] = chars[rnd.Intn(len(chars))]
+	}
+
+	return string(b)
+}</code></pre>
+<p>Осталось только сохранить URL и Alias, а после — вернуть ответ с сообщением об успехе:</p>
+<pre><code class="lang-go">// internal/http-server/handlers/url/save/save.go
+
+func New(log *slog.Logger, urlSaver URLSaver) http.HandlerFunc {
+    return func(w http.ResponseWriter, r *http.Request) {
+        ...
+        id, err := urlSaver.SaveURL(req.URL, alias)
+        if errors.Is(err, storage.ErrURLExists) {
+            // Отдельно обрабатываем ситуацию, когда запись с таким Alias уже существует
+            log.Info("url already exists", slog.String("url", req.URL))
+            render.JSON(w, r, resp.Error("url already exists"))
+            return
+        }
+        if err != nil {
+            log.Error("failed to add url", sl.Err(err))
+            render.JSON(w, r, resp.Error("failed to add url"))
+            return
+        }
+        log.Info("url added", slog.Int64("id", id))
+        responseOK(w, r, alias)
+    }
+}</code></pre>
+<p>Функцию responseOK опишем в этом же файле:</p>
+<pre><code class="lang-go">// internal/http-server/handlers/url/save/save.go
+
+func responseOK(w http.ResponseWriter, r *http.Request, alias string) {
+    render.JSON(w, r, Response{
+        Response: resp.OK(),
+        Alias:    alias,
+    })
+}</code></pre>
+<p>Опишем путь в роутере в main() и пропишем запуск сервера:</p>
+<pre><code class="lang-go">// cmd/url-shortener/main.go
+...
+router.Post("/", save.New(log, storage))
+
+log.Info("starting server", slog.String("address", cfg.Address))
+done := make(chan os.Signal, 1)
+signal.Notify(done, os.Interrupt, syscall.SIGINT, syscall.SIGTERM)
+
+srv := &http.Server{
+    Addr:         cfg.Address,
+    Handler:      router,
+    ReadTimeout:  cfg.HTTPServer.Timeout,
+    WriteTimeout: cfg.HTTPServer.Timeout,
+    IdleTimeout:  cfg.HTTPServer.IdleTimeout,
+}
+
+go func() {
+    if err := srv.ListenAndServe(); err != nil {
+        log.Error("failed to start server")
+    }
+}()
+
+log.Info("server started")
+
+<-done
+log.Info("stopping server")
+...</code></pre>
+<h3 id="reidrect" class="section-title">Redirect — перенаправление на сохраненный URL</h3>
+<p>Переходим к следующему хендлеру — redirect. Это будет GET-запрос, поэтому объект Request здесь не потребуется, как и Response. Ведь возвращать мы тоже ничего не будем, а просто сделаем редирект. Код хендера будет таким:</p>
+<pre><code class="lang-go">// internal/http-server/handlers/url/get/get.go
+
+package get
+
+import (
+	"errors"
+	"log/slog"
+	"net/http"
+	resp "url-shortener/internal/lib/api/response"
+	"url-shortener/internal/lib/logger/sl"
+	"url-shortener/internal/storage"
+
+	"github.com/go-chi/chi"
+	"github.com/go-chi/chi/middleware"
+	"github.com/go-chi/render"
+)
+
+type URLGetter interface {
+	GetURL(alias string) (string, error)
+}
+
+func New(log *slog.Logger, urlGetter URLGetter) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		const op = "handlers.url.redirect.New"
+
+		log = log.With(
+			slog.String("op", op),
+			slog.String("request_id", middleware.GetReqID(r.Context())),
+		)
+
+		// Роутер chi позволяет делать вот такие финты - получать GET-параметры по их именам.
+		// Имена определяются при добавлении хэндлера в роутер, это будет ниже.
+		alias := chi.URLParam(r, "alias")
+		if alias == "" {
+			log.Info("alias is empty")
+			render.JSON(w, r, resp.Error("not found"))
+			return
+		}
+
+		// Находим URL по алиасу в БД
+		resURL, err := urlGetter.GetURL(alias)
+		if errors.Is(err, storage.ErrURLNotFound) {
+			// Не нашли URL, сообщаем об этом клиенту
+			log.Info("url not found", "alias", alias)
+			render.JSON(w, r, resp.Error("not found"))
+			return
+		}
+		if err != nil {
+			// Не удалось осуществить поиск
+			log.Error("failed to get url", sl.Err(err))
+			render.JSON(w, r, resp.Error("internal error"))
+			return
+		}
+		log.Info("got url", slog.String("url", resURL))
+		// Делаем редирект на найденный URL
+		http.Redirect(w, r, resURL, http.StatusFound)
+	}
+}</code></pre>
+<p>В последней строчке делаем редирект со статусом http.StatusFound — код HTTP 302. Он обычно используется для временных перенаправлений, а не постоянных, за которые отвечает 301. Наш сервис может перенаправлять на разные URL в зависимости от ситуации (мы ведь можем удалить или изменить сохраненный URL), поэтому есть смысл использовать именно http.StatusFound. Это важно для систем кэширования и поисковых машин — они обычно кэшируют редиректы с кодом 301, то есть считают их постоянными. Нам такое поведение не нужно.</p>
+<p>Подключаем новый хендлер в main:</p>
+<pre><code class="lang-go">// cmd/url-shortener/main.go
+...
+router.Get("/{alias}", get.New(log, storage))
+...</code></pre>
+<p>Здесь формируем путь для обращения и именуем его параметр — {alias}. В хендлере можно получить этот параметр по указанному имени, что мы и сделано выше.</p>
+<p>Добавим так же поддержку роута на удаление. Сначала метод DeleteURL в sqlite.go:</p>
+<pre><code class="lang-go">// internal/storage/sqlite/sqlite.go
+...
+func (s *Storage) DeleteURL(alias string) (int64, error) {
+	const op = "storage.sqlite.DeleteURL"
+
+	statement, err := s.db.Prepare("DELETE FROM url WHERE alias = ?")
+	if err != nil {
+		return -1, fmt.Errorf("%s: prepare statement: %w", op, err)
+	}
+
+	result, err := statement.Exec(alias)
+	if errors.Is(err, sql.ErrNoRows) {
+		return -1, storage.ErrURLNotFound
+	}
+	if err != nil {
+		return -1, fmt.Errorf("%s: execute statement: %w", op, err)
+	}
+	r_aff, _ := result.RowsAffected()
+	return r_aff, nil
+}</code></pre>
+<p>Затем создадим папку delete в http-server/handlers/url, в ней файл delete.go, в не опишем код хендлера:</p>
+<pre><code class="lang-go">//http-server/handlers/url/delete/delete.go
+package delete
+
+import (...)
+
+type Response struct {
+	resp.Response
+	Alias string `json:"alias"`
+}
+
+type URLDeletter interface {
+	DeleteURL(alias string) (int64, error)
+}
+
+func New(log *slog.Logger, urlDeletter URLDeletter) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		const op = "handlers.url.delete.New"
+
+		log = log.With(
+			slog.String("op", op),
+			slog.String("request_id", middleware.GetReqID(r.Context())),
+		)
+
+		alias := chi.URLParam(r, "alias")
+		if alias == "" {
+			log.Info("alias is empty")
+			render.JSON(w, r, resp.Error("not found"))
+			return
+		}
+
+		// Удаляем URL по алиасу в БД
+		delete_result, err := urlDeletter.DeleteURL(alias)
+		if errors.Is(err, storage.ErrURLNotFound) {
+			// Не нашли URL, сообщаем об этом клиенту
+			log.Info("url not found", "alias", alias)
+			render.JSON(w, r, resp.Error("not found"))
+			return
+		}
+		if err != nil {
+			log.Error("failed to delete url", sl.Err(err))
+			render.JSON(w, r, resp.Error("internal error"))
+			return
+		}
+		log.Info("delete url", slog.Int64("rows aff", delete_result))
+		render.JSON(w, r, Response{
+			Response: resp.NonContent(),
+			Alias:    alias,
+		})
+	}
+}</code></pre>
+<h3 id="auth" class="section-title">Авторизация</h3>
+<p>Функционал сервиса полностью готов, но его ручки открыты для всех пользователей. Нужно добавить авторизацию для ручки save и delete. Реализуем самую простейшую авторизацию HTTP Basic Auth — стандартную проверку по логину и паролю. Если захотите выдать доступы своим друзьям, достаточно просто завести несколько пар «логин-пароль» — это не проблема. Но если вы решите открыть сервис для всех желающих, лучше написать более серьезную систему — возможно, с распределением прав доступа и другими фичами. Либо можете взять готовое решение. Пару логин-пароль (креды, credentials) будем брать из конфига приложения. Для начала добавим в объект конфига сервера поля User и Password:</p>
+<pre><code class="lang-go">// internal/config/config.go
+
+type HTTPServer struct {
+    Address     string        `yaml:"address" env-default:"0.0.0.0:8080"`
+    Timeout     time.Duration `yaml:"timeout" env-default:"5s"`
+    IdleTimeout time.Duration `yaml:"idle_timeout" env-default:"60s"`
+    User        string        `yaml:"user" env-required:"true"`
+    Password    string        `yaml:"password" env-required:"true" env:"HTTP_SERVER_PASSWORD"`
+}</code></pre>
+<p>В свой локальный конфиг проекта можете добавить креды в явном виде:</p>
+<pre><code class="lang-bash"># config/local.yaml
+
+env: "local"
+storage_path: "./storage/storage.db"
+http_server:
+    address: "localhost:8082"
+    timeout: 4s
+    idle_timeout: 30s
+    user: "my_user"
+    password: "my_pass"</code></pre>
+<p>Обратите внимание: в продакшен-конфиг добавляем только логин. Пароль важно хранить более безопасным образом — подробнее в разделе про деплой.</p>
+<p>В функции main немного изменим регистрацию хендлеров в роутере. Для защищенных хендлеров создадим отдельный вложенный роутер, к которому подключим middleware с авторизацией (он идет вместе с пакетом chi):</p>
+<pre><code class="lang-go">// cmd/url-shortener/main.go
+
+...
+// Все пути этого роутера будут начинаться с префикса `/url`
+router.Route("/url", func(r chi.Router) {
+    // Подключаем авторизацию
+    r.Use(middleware.BasicAuth("url-shortener", map[string]string{
+        cfg.HTTPServer.User: cfg.HTTPServer.Password, // Передаем в middleware креды
+        // Если у вас более одного пользователя, то можете добавить остальные пары по аналогии.
+    }))
+    r.Post("/", save.New(log, storage))
+    r.Delete("/{alias}", deletee.New(log, storage))
+})
+router.Get("/{alias}", get.New(log, storage))
+...</code></pre>
+<h3 id="functests" class="section-title">Функциональные тесты</h3>
+<p>Для тестирования всего сервиса целиком имеет смысл написать функциональные тесты, которые будут его тестировать как некую черную коробку. Сервис будет честно запускаться и не подозревать, что его тестируют. Инфраструктура при этом поднимается в докере, а зависимости, при наличии, заменяются сетевыми моками. Здесь мы используем две новые библиотеки, которые очень упрощают написание тестов:</p>
+<ul>
+    <li>httpexpect — для тестирования REST API</li>
+    <li>gofakeit — для генерации случайных данных разного формата (имена, имейлы, номера телефонов, URL и другое)</li>
+</ul>
+<p>Установим их:</p>
+<pre><code class="lang-bash">go get github.com/brianvoe/gofakeit/v6
+go get github.com/gavv/httpexpect/v2</code></pre>
+<p> Функциональные тесты будем размещать в папке tests, которая расположена в корне проекта. Создадим в ней файл url_shortener_test.go и напишем самый простенький тест Happy Path:</p>
+<pre><code class="lang-go">// tests/url_shortener_test.go
+
+const (
+    host = "localhost:8082"
+)
+
+func TestURLShortener_HappyPath(t *testing.T) {
+    // Универсальный способ создания URL
+    u := url.URL{
+        Scheme: "http",
+        Host:   host,
+    }
+
+    // Создаем клиент httpexpect
+    e := httpexpect.Default(t, u.String())
+
+    e.POST("/url"). // Отправляем POST-запрос, путь - '/url'
+        WithJSON(save.Request{ // Формируем тело запроса
+            URL:   gofakeit.URL(), // Генерируем случайный URL
+            Alias: random.NewRandomString(10), // Генерируем случайную строку
+        }).
+        WithBasicAuth("myuser", "mypass"). // Добавляем к запросу креды авторизации
+        Expect(). // Далее перечисляем наши ожидания от ответа
+        Status(200). // Код должен быть 200
+        JSON().Object(). // Получаем JSON-объект тела ответа
+        ContainsKey("alias") // Проверяем, что в нём есть ключ 'alias'
+}</code></pre>
+<p>Тест делает лишь самые простые проверки. Чтобы выполнить тест, нужно сначала запустить сервис, затем уже — тест. Он будет честно отправлять запросы HTTP-серверу, а сервер будет честно ему отвечать. Не забудьте убедиться, что указали правильный HTTP-порт. Далее имеет смысл написать тесты на весь функционал приложения: сохранить URL (с указанием алиаса и без), проверить, что по нему выполняется корректный редирект, удалить созданную запись, проверить, что редирект по ней больше не происходит. Кроме того, тест лучше переписать на табличный, чтобы протестировать различные типы кейсов.</p>
