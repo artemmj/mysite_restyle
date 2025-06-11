@@ -56,12 +56,19 @@ onMounted(() => {
             margin-top: 1.5em;
         }
         p {
+            color: #34495e;
             line-height: 1.8;
             margin-bottom: 1.5rem;
-            color: #34495e;
         }
         ul {
+            color: #34495e;
             margin: 1.5rem;
+        }
+        li {
+            margin: 1rem;
+        }
+        a {
+            color: blue;
         }
         .section-title {
             text-align: center;
@@ -77,12 +84,28 @@ onMounted(() => {
         }
         pre[class*="language-"] {
             margin: 1.5rem 0;
+            padding: 2rem;
             border-radius: 10px;
             box-shadow: 0 4px 12px rgba(0,0,0,0.2);
             code {
                 font-family:'Courier New', Courier, monospace;
                 font-size: 0.9rem;
                 line-height: 1.5;
+            }
+        }
+    }
+}
+@media (max-width: 768px) {
+    .content {
+        :deep() {
+            pre[class*="language-"] {
+                margin: 0.5rem 0;
+                padding: 1rem;
+                code {
+                    font-family:'Courier New', Courier, monospace;
+                    font-size: 0.9rem;
+                    line-height: 1.5;
+                }
             }
         }
     }

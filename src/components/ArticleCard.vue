@@ -42,13 +42,9 @@ defineProps({
         margin-bottom: 0.5rem;
     }
     .meta {
-        color: #7f8c8d;
-        font-size: 0.7rem;
+        font-size: 0.75rem;
+        line-height: 1.7;
         margin-bottom: 1rem;
-    }
-    p {
-        color: #34495e;
-        line-height: 1.6;
     }
     .short-content {
         color: black;
