@@ -21,7 +21,7 @@ import AppFooter from '@/components/AppFooter.vue';
 @import '@/assets/base.scss';
 
 .app {
-    font-family: Helvetica, sans-serif;
+    font-family: Arial, Helvetica, sans-serif;
     display: flex;
     flex-direction: column;
     min-height: 100vh;

@@ -58,6 +58,7 @@ onMounted(() => {
         p {
             color: #34495e;
             line-height: 1.8;
+            margin-top: 1.5rem;
             margin-bottom: 1.5rem;
         }
         ul {
@@ -94,7 +95,7 @@ onMounted(() => {
             border-radius: 10px;
             box-shadow: 0 4px 12px rgba(0,0,0,0.2);
             code {
-                font-family:'Courier New', Courier, monospace;
+                font-family: "Lucida Console", Monaco, monospace;
                 font-size: 0.9rem;
                 line-height: 1.5;
             }
@@ -108,8 +109,8 @@ onMounted(() => {
                 margin: 0.5rem 0;
                 padding: 1rem;
                 code {
-                    font-family:'Courier New', Courier, monospace;
-                    font-size: 0.9rem;
+                    font-family: "Lucida Console", Monaco, monospace;
+                    font-size: 0.8rem;
                     line-height: 1.5;
                 }
             }
