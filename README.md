@@ -1,4 +1,4 @@
-# devblog
+# fullstackdevblog
 
 ## Project setup
 ```
