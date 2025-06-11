@@ -61,12 +61,7 @@ onMounted(() => {
             color: #34495e;
         }
         ul {
-            margin-left: 50px;
-        }
-        img {
-            max-width: 100%;
-            border-radius: 8px;
-            margin: 1rem 0;
+            margin: 1.5rem;
         }
         .section-title {
             text-align: center;
@@ -84,7 +79,6 @@ onMounted(() => {
             margin: 1.5rem 0;
             border-radius: 10px;
             box-shadow: 0 4px 12px rgba(0,0,0,0.2);
-            
             code {
                 font-family:'Courier New', Courier, monospace;
                 font-size: 0.9rem;
