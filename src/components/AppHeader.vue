@@ -19,12 +19,12 @@
     align-items: center;
     padding: 1rem 5%;
     background: #2c3e50;
-    color: white;
+    color: #ecf0f1;
     box-shadow: 0 2px 10px rgba(0,0,0,0.1);
     .logo {
         font-size: 1.8rem;
-        font-weight: 700;
-        color: #42b983;
+        font-weight: 600;
+        color: #ecf0f1;
         text-decoration: none;
     }
     nav a {

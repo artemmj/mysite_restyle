@@ -70,6 +70,12 @@ onMounted(() => {
         a {
             color: blue;
         }
+        .article-title {
+            text-align: center;
+            padding: 10px;
+            margin-bottom: 1.5rem;
+            border-bottom: solid;
+        }
         .section-title {
             text-align: center;
             padding: 10px;
