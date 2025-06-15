@@ -1,10 +1,10 @@
 <template>
     <div class="article-view" v-prism>
         <div class="article">
-        <div v-if="loading" class="loading">Loading...</div>
-        <div v-else-if="error" class="error">{{ error }}</div>
-        <div v-else v-html="content" class="content"></div>
-    </div>
+            <div v-if="loading" class="loading">Loading...</div>
+            <div v-else-if="error" class="error">{{ error }}</div>
+            <div v-else v-html="content" class="content"></div>
+        </div>
     </div>
 </template>
 
@@ -71,6 +71,20 @@ onMounted(() => {
         a {
             color: blue;
         }
+        table {
+            border-collapse: collapse;
+        }
+        th, td {
+            border: 0.1rem solid #ddd;
+            padding: 0.5rem;
+        }
+        img {
+            max-width: 70%;
+            height: auto;
+            border-radius: 8px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            margin: 1.5rem 0;
+        }
         .article-title {
             text-align: center;
             padding: 10px;
@@ -113,6 +127,9 @@ onMounted(() => {
                     font-size: 0.8rem;
                     line-height: 1.5;
                 }
+            }
+            img {
+                max-width: 100%;
             }
         }
     }
