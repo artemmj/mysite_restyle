@@ -13,7 +13,7 @@
 </template>
 
 <script setup lang="ts">
-import { PropType, defineProps } from 'vue';
+import { defineProps, PropType } from 'vue';
 import { Article } from '../views/HomeView.vue'
 
 defineProps({

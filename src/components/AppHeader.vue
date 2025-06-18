@@ -1,8 +1,8 @@
 <template>
     <header class="header">
-        <router-link to="/" class="logo">fullstackdevblog.ru</router-link>
+        <router-link to="/" class="logo">aamakarenko.ru</router-link>
         <nav>
-            <router-link to="/">Все материалы</router-link>
+            <router-link to="/">Главная</router-link>
             <router-link to="/notes">Заметки</router-link>
             <router-link to="/about">Про сайт</router-link>
         </nav>

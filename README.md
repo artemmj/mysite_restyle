@@ -1,4 +1,4 @@
-# fullstackdevblog
+# aamakarenko
 
 ## Project setup
 ```

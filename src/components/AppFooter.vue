@@ -1,6 +1,6 @@
 <template>
     <footer class="footer">
-        <p>&copy; {{ new Date().getFullYear() }} fullstackdevblog.ru</p>
+        <p>&copy; {{ new Date().getFullYear() }} aamakarenko.ru</p>
     </footer>
 </template>
 
