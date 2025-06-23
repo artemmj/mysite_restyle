@@ -57,11 +57,12 @@ onMounted(() => {
         }
         p {
             color: #34495e;
-            line-height: 1.8;
+            line-height: 1.7;
             margin-top: 1.5rem;
             margin-bottom: 1.5rem;
         }
         ul {
+            line-height: 1.6;
             color: #34495e;
             margin: 1.5rem;
         }
