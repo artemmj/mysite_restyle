@@ -766,3 +766,185 @@ async def dell_student_by_id(id: int) -> dict:
     return {"message": "Ошибка при удалении студента"}
 </code></pre>
 <h3 class="section-title">Авторизация и аутентификация</h3>
+<p>Аутентификация — это процесс проверки подлинности пользователя. Он подтверждает, что пользователь действительно тот, за кого себя выдает. Когда вы вводите логин и пароль в форму авторизации, на самом деле происходит процесс аутентификации. Система проверяет, существует ли пользователь, корректный ли его пароль, и только если все условия выполнены, происходит аутентификация.</p>
+<p>Авторизация — это процесс предоставления пользователю прав доступа к определенным ресурсам или действиям. Она определяет, что пользователь может и не может делать в системе. Авторизация может быть и без аутентификации. К примеру, любая свободная доска объявлений: не выполнив аутентификацию, можно читать объявления, а в некоторых случаях забирать контактные данные. Но иногда доступ к контактам будет открыт только после входа в систему (после аутентификации), как и размещение объявлений.</p>
+<p>Более серьезные темы работы с авторизацией включают доступ к админ-панели. В зависимости от уровня доступа будет открыт тот или иной функционал или предоставлена определенная скрытая информация. Для реализации пользователям обычно присваиваются определенные роли, и в зависимости от роли каждому предоставляются те или иные права. Кто-то может всё, например, админ, а кому-то можно только оставить комментарии (авторизованный пользователь).</p>
+<p><b>Связанные понятия</b></p>
+<p>Dependencies (зависимости) — это механизм FastAPI, который позволяет легко внедрять зависимости в маршруты. Это могут быть как простые значения, так и сложные объекты, такие как базы данных или другие сервисы. Например, такой зависимостью может быть результат выполнения той или иной функции. К примеру, это проверка, авторизован ли пользователь. Тогда мы передадим аргументом Dependencies вместе с функцией, которая должна выполниться ранее. И только после успешного её выполнения откроется доступ к новой функции. Зависимостей может быть несколько.</p>
+<p>Hashing — процесс преобразования данных (например, пароля) в уникальный код фиксированной длины. В FastAPI часто используется для безопасного хранения паролей. </p>
+<p>JWT токены: JSON Web Token (JWT) — это компактный, URL-ориентированный способ представления информации, которую можно использовать для передачи данных между двумя сторонами. В контексте авторизации JWT часто используется для создания токенов доступа, которые могут проверяться сервером.</p>
+<p>Куки — это небольшие данные, которые сервер отправляет браузеру. Каждый раз, когда браузер запрашивает страницу с того же сервера, он отправляет куку обратно. Это позволяет сохранять состояние, например, оставаться залогиненным.</p>
+<p><b>Подготовка</b></p>
+<p>Для начала создадим отдельный роутер (папку) и назовем его user. В самой папке необходимо будет добавить несколько файлов: router.py, dependencies.py, auth.py, schemas.py, dao.py. Так же дополнительно необходимо установить несколько пакетов: python-jose (библиотека для работы с JWT, поддерживает различные алгоритмы шифрования и подписания), passlib[bcrypt] (универсальная библиотека для хэширования паролей, которая поддерживает различные алгоритмы хэширования, включая bcrypt) и bcrypt==4.0.1 (библиотека для хэширования паролей с использованием алгоритма bcrypt).</p>
+<p>Напишем логику для работы с паролями:</p>
+<pre><code class="lang-py">from passlib.context import CryptContext
+
+# Создание контекста для хэширования паролей,
+# настраивается для использования алгоритма bcrypt.
+# (deprecated="auto" указывает использовать рекомендованные
+# схемы хэширования и автоматически обновлять устаревшие)
+pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+
+
+def get_password_hash(password: str) -> str:
+    """
+    Функция для создания хэша пароля (принимает
+    пароль в виде строки и возвращает его безопасный хэш).
+    """
+    return pwd_context.hash(password)
+
+
+def verify_password(plain_password: str, hashed_password: str) -> bool:
+    """
+    Функция для проверки пароля (принимает обычный пароль и его хэш,
+    возвращая True, если пароль соответствует хэшу, и False в противном случае)
+    """
+    return pwd_context.verify(plain_password, hashed_password)
+</code></pre>
+<p>Далее, напишем функцию для генерации JWT токена:</p>
+<pre><code class="lang-py">from jose import jwt
+from datetime import datetime, timedelta, timezone
+from app.config import get_auth_data
+
+def create_access_token(data: dict) -> str:
+    """Функция создает JWT токен для аутентификации пользователей."""
+    to_encode = data.copy()
+    # Задаем время жизни токена
+    expire = datetime.now(timezone.utc) + timedelta(days=30)
+    to_encode.update({"exp": expire})
+    # Получаем данные из настроек - секретный ключи и алгоритм шифрования
+    auth_data = get_auth_data()
+    # Кодируем все данные в JWT
+    encode_jwt = jwt.encode(to_encode, auth_data['secret_key'], algorithm=auth_data['algorithm'])
+    return encode_jwt
+</code></pre>
+<p>Тут нужно добавить некоторые параметры в .env файл, и после поместить эти данные в настройки:</p>
+<pre><code class="lang-plain">...
+# Новые поля
+SECRET_KEY=gV64m9aIzFG4qpgVphvQbPQrtAO0nM-7YwwOvu0XPt5KJOjAy4AfgLkqJXYEt
+ALGORITHM=HS256
+</code></pre>
+<p>Добавим новые поля и функцию в файл с настройками:</p>
+<pre><code class="lang-py">...
+class Settings(BaseSettings):
+    ...
+    SECRET_KEY: str
+    ALGORITHM: str
+    ...
+
+def get_auth_data():
+    return {"secret_key": s.SECRET_KEY, "algorithm": s.ALGORITHM}
+</code></pre>
+<p>Теперь можно поместить данный токен в куки, после чего его считывать. Поместить в него можно и другие данные. В результате считывания мы сможем понимать следующее:</p>
+<ul>
+    <li>Истек ли токен. Если да, то мы можем автоматически «выбить» пользователя из системы</li>
+    <li>Принимаем ID пользователя или прочие данные о нем для дальнейшей работы. Например, для предоставления пользователю того или иного функционала (данных).</li>
+</ul>
+<p>В серьезных приложениях для того чтоб пользователя не выкидывало из системы реализуется функционал refresh_token - он позволяет автоматически обновить срок жизни токена, тем самым, не заставляя пользователя повторно входить в систему.</p>
+<p>Данные о пользователях, как и их права, нам нужно где-то хранить. Cоздадим соответствующую модель в файле user/models.py:</p>
+<pre><code class="lang-py">from sqlalchemy import text
+from sqlalchemy.orm import Mapped, mapped_column
+
+from app.database import Base, str_uniq, int_pk
+
+class User(Base):
+    id: Mapped[int_pk]
+    phone_number: Mapped[str_uniq]
+    first_name: Mapped[str]
+    last_name: Mapped[str]
+    email: Mapped[str_uniq]
+    password: Mapped[str]
+
+    # Условные роли пользователей
+    is_user: Mapped[bool] = mapped_column(default=True, server_default=text('true'), nullable=False)
+    is_student: Mapped[bool] = mapped_column(default=False, server_default=text('false'), nullable=False)
+    is_teacher: Mapped[bool] = mapped_column(default=False, server_default=text('false'), nullable=False)
+    is_admin: Mapped[bool] = mapped_column(default=False, server_default=text('false'), nullable=False)
+    is_super_admin: Mapped[bool] = mapped_column(default=False, server_default=text('false'), nullable=False)
+
+    extend_existing = True
+
+    def __repr__(self):
+        return f"{self.__class__.__name__}(id={self.id})"
+</code></pre>
+<p>Привяжем новую таблицу в migration/env.py:</p>
+<pre><code class="lang-py">from app.users.models import User</code></pre>
+<p>Выполним миграцию (ревизию):</p>
+<pre><code class="lang-bash">alembic revision --autogenerate -m "create users table"</code></pre>
+<p>Применим изменения:</p>
+<pre><code class="lang-bash">alembic upgrade head</code></pre>
+<p>Далее, необходимо создать Router и написать метод для регистрации пользователя:</p>
+<pre><code class="lang-py">from fastapi import APIRouter, HTTPException, status
+from app.user.auth import get_password_hash
+from app.user.dao import UserDAO
+from app.user.schemas import UserSchemaRegister
+
+router = APIRouter(prefix='/auth', tags=['Auth'])
+
+@router.post("/register/")
+async def register_user(reg_data: UserSchemaRegister) -> dict:
+    user_dict = reg_data.dict()
+    user_dict['password'] = get_password_hash(reg_data.password)
+    try:
+        await UsersDAO.create(**user_dict)
+    except exc.IntegrityError:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail='Невозможно зарегистрироваться с переданными данными'
+        )
+    return {'message': 'Вы успешно зарегистрированы'}
+</code></pre>
+<p>Опишем схему для регистрации юзера (schemas.py) и сразу методы для работы с БД (dao.py):</p>
+<pre><code class="lang-py">import re
+from pydantic import BaseModel, EmailStr, Field, field_validator
+
+class UserSchemaRegister(BaseModel):
+    email: EmailStr = Field(..., description="Электронная почта")
+    password: str = Field(..., min_length=5, max_length=50, description="Пароль, от 5 до 50 знаков")
+    phone_number: str = Field(..., description="Номер телефона в международном формате, начинающийся с '+'")
+    first_name: str = Field(..., min_length=3, max_length=50, description="Имя, от 3 до 50 символов")
+    last_name: str = Field(..., min_length=3, max_length=50, description="Фамилия, от 3 до 50 символов")
+
+    @field_validator("phone_number")
+    @classmethod
+    def validate_phone_number(cls, value: str) -> str:
+        if not re.match(r'^\+\d{5,15}$', value):
+            raise ValueError('Номер телефона должен начинаться с "+" и содержать от 5 до 15 цифр')
+        return value
+</code></pre>
+<pre><code class="lang-py">class UsersDAO:
+    @classmethod
+    async def get_one_or_none(cls, filters: dict):
+        async with async_session_maker() as session:
+            query = sqlalchemy_select(User).filter_by(**filters)
+            result = await session.execute(query)
+            return result.scalar_one_or_none()
+
+    @classmethod
+    async def create(cls, **values):
+        async with async_session_maker() as session:
+            async with session.begin():
+                new_instance = User(**values)
+                session.add(new_instance)
+                try:
+                    await session.commit()
+                except SQLAlchemyError as e:
+                    await session.rollback()
+                    raise e
+                return new_instance
+</code></pre>
+<p>Наконец, зарегистровав роут, можно тестировать создание юзеров. Кавидим, пароли в БД хранятся в виде хешей, что правильно. Следующий шаг это аутинтификация пользователя в базе данных. Задача в том, чтоб после успешного входа в систему (аутентификация) мы сгенирировали JWT токен и поместили его в куки.</p>
+<p>Для удобства в файле auth.py напишем функцию, которая будет принимать Email и пароль, а дальше просто будет проверять есть ли такой пользователь и с таким паролем в базе данных (без всяких там токенов и куки):</p>
+<pre><code class="lang-py">async def authenticate_user(email: EmailStr, password: str):
+    user = await UsersDAO.get_one_or_none(email=email)
+    if not user or verify_password(plain_password=password, hashed_password=user.password) is False:
+        return None
+    return user
+</code></pre>
+<p>Кроме того, напишем Pydantic модель для авторизации пользователя:</p>
+<pre><code class="lang-py">class UserSchemaAuth(BaseModel):
+    email: EmailStr = Field(..., description="Почта")
+    password: str = Field(..., min_length=5, max_length=50, description="Пароль, от 5 до 50 знаков")
+</code></pre>
+<p>Затем напишем обработчик POST-запроса:</p>
+<pre><code class="lang-py"></code></pre>
