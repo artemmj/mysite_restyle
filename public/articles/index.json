@@ -1,10 +1,10 @@
 [
     {
         "id": "13",
-        "title": "Python. Статья. Проект REST API на FastAPI (UnivercityAPI)",
+        "title": "FastAPI. Статья. Проект REST API (UnivercityAPI)",
         "date": "🗓 23 июня 2025",
         "tags": "🏷️ Python, FastAPI",
-        "excerpt": ""
+        "excerpt": "Каркас проекта, PostgreSQL, SQLAlchemy, Alembic, Router, асинхронные GET POST PUT PATCH запросы, авторизация и аутентификация, фронтенд и статика"
     },
     {
         "id": "12",
