@@ -936,15 +936,80 @@ class UserSchemaRegister(BaseModel):
 <p>Наконец, зарегистровав роут, можно тестировать создание юзеров. Кавидим, пароли в БД хранятся в виде хешей, что правильно. Следующий шаг это аутинтификация пользователя в базе данных. Задача в том, чтоб после успешного входа в систему (аутентификация) мы сгенирировали JWT токен и поместили его в куки.</p>
 <p>Для удобства в файле auth.py напишем функцию, которая будет принимать Email и пароль, а дальше просто будет проверять есть ли такой пользователь и с таким паролем в базе данных (без всяких там токенов и куки):</p>
 <pre><code class="lang-py">async def authenticate_user(email: EmailStr, password: str):
-    user = await UsersDAO.get_one_or_none(email=email)
+    user = await UsersDAO.get_one_or_none({"email": email})
     if not user or verify_password(plain_password=password, hashed_password=user.password) is False:
         return None
     return user
 </code></pre>
-<p>Кроме того, напишем Pydantic модель для авторизации пользователя:</p>
+<p>Кроме того, напишем Pydantic модель для авторизации пользователя и обработчик POST-запроса:</p>
 <pre><code class="lang-py">class UserSchemaAuth(BaseModel):
     email: EmailStr = Field(..., description="Почта")
     password: str = Field(..., min_length=5, max_length=50, description="Пароль, от 5 до 50 знаков")
 </code></pre>
-<p>Затем напишем обработчик POST-запроса:</p>
-<pre><code class="lang-py"></code></pre>
+<pre><code class="lang-py">@router.post("/login", summary="Авторизация")
+async def auth_user(response: Response, user_data: UserSchemaAuth):
+    check = await authenticate_user(email=user_data.email, password=user_data.password)
+    if check is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail='Неверная почта или пароль',
+        )
+    access_token = create_access_token({"sub": str(check.id)})
+    # response используется для управления HTTP-ответом, отправляемым клиенту
+    response.set_cookie(key="access_token", value=access_token, httponly=True)
+    return {'access_token': access_token, 'refresh_token': None}
+</code></pre>
+<p>Далее необходимо написать механизм, который позволит смотреть в куки и проверять, есть ли вообще ключ access_token, валиден ли этот ключ и так далее.</p>
+<p><b>Dependencies на практике</b></p>
+<p>Напишем функцию, которая позволит достать токен (get_token), и затем функцию, которая будет зависеть от get_token. Смысл зависимости в параметрах token: str = Depends(get_token) сводится к тому, чтобы или выполнить функцию, если получим токен, или сразу вызвать исключение:</p>
+<pre><code class="lang-py">from datetime import datetime, timezone
+from jose import jwt, JWTError
+from fastapi import Request, HTTPException, status, Depends
+from app.config import get_auth_data
+from app.user.dao import UsersDAO
+
+def get_token(request: Request):
+    """Функция пытается получить токен их запроса."""
+    token = request.cookies.get('users_access_token')
+    if not token:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail='Token not found')
+    return token
+
+async def get_current_user(token: str = Depends(get_token)):
+    """Фукнция проверяет срок действия токена и возвращает юзера если все ок."""
+    try:
+        # Декодер - чтобы получить из токена данные с которыми можно будет работать (exp и sub)
+        auth_data = get_auth_data()
+        payload = jwt.decode(token, auth_data['secret_key'], algorithms=[auth_data['algorithm']])
+    except JWTError:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail='Токен не валидный!')
+
+    # Проверка срока действия токена, если истек - выбрасываем исключение
+    expire = payload.get('exp')
+    expire_time = datetime.fromtimestamp(int(expire), tz=timezone.utc)
+    if (not expire) or (expire_time < datetime.now(timezone.utc)):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail='Токен истек')
+
+    user_id = payload.get('sub')
+    if not user_id:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail='Не найден ID пользователя')
+
+    user = await UsersDAO.get_one_or_none(int(user_id))
+    if not user:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail='User not found')
+
+    return user
+</code></pre>
+<p>Завершив проверку, или поймаем исключение (ошибку) или получим данные о пользователе. Все сводится к тому, чтобы выйти из функции без исключения. Если это произошло — значит все у нас получилось.</p>
+<p>Теперь напишем обработчик GET запроса, который будет возвращать данные о пользователе авторизованному пользователю и возвращать исключение, если пользователь не авторизован. Начнем с роута:</p>
+<pre><code class="lang-py">@router.get("/me", summary="Инфо о юзере")
+async def get_me(user_data: User = Depends(get_current_user)):
+    return user_data
+</code></pre>
+<p>Мы указали зависимость от функции get_current_user. В свою очередь, get_current_user зависит от get_token. На этом простом примере видно, как можно выстраивать многоуровневые зависимости.</p>
+<p>Так же напишем обработчик, который будет разлогинивать юзера. Для этого нужно будет удалить токен из кук:</p>
+<pre><code class="lang-py">@router.post("/logout", summary="Разлогиниться")
+async def logout_user(response: Response):
+    response.delete_cookie(key="users_access_token")
+    return {'message': 'Пользователь успешно вышел из системы'}
+</code></pre>
