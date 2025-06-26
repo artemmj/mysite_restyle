@@ -684,4 +684,85 @@ def receive_after_insert(mapper, connection, target):
     )
 </code></pre>
 <p>Это событие, after_insert для модели Student, которое автоматически обновляет счетчик студентов в таблице Major после добавления нового студента. Теперь изменим сам метод по добавлению студентов:</p>
-<pre><code class="lang-py"></code></pre>
+<pre><code class="lang-py">@classmethod
+async def create(cls, data: dict):
+    async with async_session_maker() as session:
+        async with session.begin():
+            new_student = Student(**data)
+            session.add(new_student)
+            await session.flush()
+            new_student_id = new_student.id
+            await session.commit()
+            return new_student_id
+</code></pre>
+<p>Опишем Pydantic модель:</p>
+<pre><code class="lang-py">class StudentSchemaCreate(BaseModel):
+    # id генирирует БД
+    phone_number: str = Field(..., description="Номер телефона в международном формате, начинающийся с '+'")
+    first_name: str = Field(..., min_length=1, max_length=50, description="Имя, от 1 до 50 символов")
+    last_name: str = Field(..., min_length=1, max_length=50, description="Фамилия, от 1 до 50 символов")
+    date_of_birth: date = Field(..., description="Дата рождения в формате ГГГГ-ММ-ДД")
+    email: EmailStr = Field(..., description="Электронная почта")
+    address: str = Field(..., min_length=10, max_length=200, description="Адрес, не более 200 символов")
+    enrollment_year: int = Field(..., ge=2002, description="Год поступления должен быть не меньше 2002")
+    major_id: int = Field(..., ge=1, description="ID факультета")
+    course: int = Field(..., ge=1, le=5, description="Курс должен быть в диапазоне от 1 до 5")
+    special_notes: Optional[str] = Field(None, max_length=500, description="Доп. заметки, не более 500 символов")
+
+    @field_validator("phone_number")
+    @classmethod
+    def validate_phone_number(cls, value: str) -> str:
+        if not re.match(r'^\+\d{1,15}$', value):
+            raise ValueError('Номер телефона должен начинаться с "+" и содержать от 1 до 15 цифр')
+        return value
+
+    @field_validator("date_of_birth")
+    @classmethod
+    def validate_date_of_birth(cls, value: date):
+        if value and value >= datetime.now().date():
+            raise ValueError('Дата рождения должна быть в прошлом')
+        return value
+</code></pre>
+<p>Опишем метод, который будет обрабатывать POST запрос для добавления студента в базу данных:</p>
+<pre><code class="lang-py">@router.post("/", summary="Добавить нового")
+async def create_student(student: StudentSchemaCreate) -> dict:
+    check = await StudentDAO.create(student.dict())
+    if not check:
+        return {"message": "Ошибка при добавлении студента!"}
+    return {"message": "Студент успешно добавлен!", "student": student}
+</code></pre>
+<p>Метод обновления будет аналогичен тому, который у Major, а вот с удалением немного поработаем - необходимо уменьшать на 1 счетчик в таблице факультета. Предварительно, добавим новое событие:</p>
+<pre><code class="lang-py">@event.listens_for(Student, 'after_delete')
+def upd_major_after_insert(mapper, connection, target):
+    major_id = target.major_id
+    connection.execute(
+        sqlalchemy_update(Major)
+        .where(Major.id == major_id)
+        .values(count_students=Major.count_students - 1)
+    )
+</code></pre>
+<p>Далее напишем отдельный метод для удаления студента по айди и следом опишем роут:</p>
+<pre><code class="lang-py">@classmethod
+async def delete(cls, id: int):
+    async with async_session_maker() as session:
+        async with session.begin():
+            query = sqlalchemy_select(cls.model).filter_by(id=id)
+            result = await session.execute(query)
+            deleted_student = result.scalar_one_or_none()
+
+            if not deleted_student:
+                return None
+
+            # Удаляем студента
+            await session.execute(sqlalchemy_delete(cls.model).filter_by(id=id))
+            await session.commit()
+            return id
+</code></pre>
+<pre><code class="lang-py">@router.delete("/{id}")
+async def dell_student_by_id(id: int) -> dict:
+    check = await StudentDAO.delete_student_(id=id)
+    if check:
+        return {"message": f"Студент с id={id} удален"}
+    return {"message": "Ошибка при удалении студента"}
+</code></pre>
+<h3 class="section-title">Авторизация и аутентификация</h3>
