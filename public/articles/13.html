@@ -1025,4 +1025,159 @@ async def get_all_users(user_data: User = Depends(get_current_admin_user)):
     return await UsersDAO.get_all()
 </code></pre>
 <p>На этом написание основного апи можно считать оконченным. Дальше только расширять и улучшать само апи и добавлять примитивный фронтэнд, чем и займемся далее.</p>
-<h3 class="section-title">Фронтенд и статические файлы</h3>
+<h3 class="section-title">Фронтенд</h3>
+<p>Фронтенд представляет собой часть веб-приложения, которая отвечает за визуальное отображение и взаимодействие с пользователем. Фронтенд и бэкенд могут существовать независимо, взаимодействуя друг с другом через API, и могут быть развернуты на одном сервере, или на разных.</p>
+<p><b>Шаблонизатор Jinja2</b></p>
+<p>Обычные HTML-страницы статичны и требуют JavaScript для динамического обновления содержимого. В этом случае шаблонизаторы приходят на помощь, предоставляя механизм для генерации динамических страниц. Один из самых популярных шаблонизаторов для Python — Jinja2, который используется в таких фреймворках, как Django, Flask и FastAPI. Jinja2 позволяет встраивать динамические данные в HTML-шаблоны.</p>
+<p><b>Статические файлы и шаблоны</b></p>
+<p>Статические файлы — это ресурсы, которые не изменяются динамически при каждом запросе и отображаются пользователю в том виде, в котором они хранятся (напр. изображения, css/javascript файлы).</p>
+<p>Шаблоны — это HTML-файлы, которые содержат динамические элементы и могут изменяться в зависимости от переданных данных. Они представляют собой статические HTML-страницы, которые наполняются динамическим содержимым с помощью шаблонизаторов.</p>
+<p>Приступим к работе. Для начала нам нужно будет дополнить структуру нашего проекта. Нам необходимо будет создать 3 папки в корне проекта (app):</p>
+<ul>
+    <li>pages – будем хранить файлы FastApi, твечающие за эндпоинты вокруг отрисовки страниц</li>
+    <li>templates – будем хранить HTML-шаблоны, в которую вдохнем жизнь</li>
+    <li>static – будем хранить статические файлы. Внутри понадобятся папки images, style и js.</li>
+</ul>
+<p>Кроме того, необходимо установить пакет jinja2.</p>
+<p>Начнем с создания роутера страниц (app/pages/router.py):</p>
+<pre><code class="lang-py">from fastapi import APIRouter, Request
+from fastapi.templating import Jinja2Templates
+
+router = APIRouter(prefix='/pages', tags=['Фронтенд'])
+templates = Jinja2Templates(directory='app/templates')
+
+@router.get('/students')
+async def get_students_html(request: Request):
+    # Тут смысл в том, что мы возвращаем не простой JSON (dict), а HTML страницу.
+    return templates.TemplateResponse(name='students.html', context={'request': request})
+</code></pre>
+<p>Когда создаём эндпоинты в FastAPI, которые возвращают HTML-шаблоны с помощью Jinja2, важно учитывать несколько ключевых аспектов - подробно рассмотрим и разберём, почему важно принимать объект Request в таких эндпоинтах:</p>
+<ul>
+    <li>Шаблонизатор Jinja2 требует request: Jinja2 использует объект request для управления различными функциями, такими как URL‑генерация и работа с сессиями. Без передачи request в контекст шаблона, такие функции могут не работать корректно.</li>
+    <li>Интеграция с URL: Когда вы используете функции Jinja2 для генерации URL‑адресов в вашем шаблоне, как, например, с помощью url_for(), вам нужен доступ к объекту request, чтобы корректно формировать адреса. Например, если у вас есть ссылки на другие страницы или ресурсы, request помогает в их построении.</li>
+    <li>Обработка сессий и Cookies: Если вы используете сессии или cookies, которые могут влиять на отображаемый контент, вам нужно передавать request в шаблон, чтобы иметь доступ к этим данным.</li>
+</ul>
+<p>Установим зависимость роута с эндпоинтом, который возвращает всех студентов:</p>
+<pre><code class="lang-py">async def get_students_html(request: Request, students=Depends(get_all_students)):</code></pre>
+<p>Передадим данные по студентам в наш шаблон:</p>
+<pre><code class="lang-py">return templates.TemplateResponse(
+    name='students.html',
+    context={
+        'request': request,
+        'students': students,
+    },
+)
+</code></pre>
+<p>Теперь создадим нашу HTML страницу (templates/students.html):</p>
+<pre><code class="lang-markup">&lt;body&gt;
+    &lt;h1&gt;Список студентов&lt;/h1&gt;
+    &lt;div&gt;
+        {% for student in students %}
+        &lt;div&gt;
+            &lt;h2&gt;ID: {{ student.id }}&lt;/h2&gt;
+            &lt;p&gt;Полное имя: {{ student.first_name }} {{ student.last_name }}&lt;/p&gt;
+            &lt;p&gt;Email: {{ student.email }}&lt;/p&gt;
+            &lt;!-- другие атрибуты по усмотрению --&gt;
+        &lt;/div&gt;
+        {% endfor %}
+    &lt;/div&gt;
+&lt;/body&gt;
+</code></pre>
+<p>Подключим к нашему проекту статические файлы. Для начала дополним нашу таблицу со студентами одним значением - photo. В него мы будем подставлять название фотографии со студентом:</p>
+<pre><code class="lang-py">photo: Mapped[str] = mapped_column(Text, nullable=True)</code></pre>
+<p>ВЫполним миграцию и обновление БД:</p>
+<pre><code class="lang-bash">alembic revision --autogenerate -m "add column photo"
+alembic upgrade head
+</code></pre>
+<p>Так же обновим Pydantic модель студента, добавив описание поля photo:</p>
+<pre><code class="lang-py">photo: Optional[str] = Field(None, max_length=100, description="Фото")</code></pre>
+<p><b>Загрузка файлов в FastApi через POST запросы</b></p>
+<p>Выделим отдельную папку под файлы file. В routers.py добавим фукнцию загрузки:</p>
+<pre><code class="lang-py">import shutil
+from fastapi import APIRouter, UploadFile
+
+router = APIRouter(prefix='/files', tags=['Работа с файлами'])
+
+@router.post('/', summary="Загрузить")
+async def add_student_photo(file: UploadFile, image_name: str):
+    with open(f"app/static/images/{image_name}.webp", "wb+") as photo_obj:
+        shutil.copyfileobj(file.file, photo_obj)
+</code></pre>
+<p><b>Статические файлы</b></p>
+<p>Использовать мы будем класс StaticFiles, который мы импортируем в main.py:</p>
+<pre><code class="lang-py">from fastapi.staticfiles import StaticFiles</code></pre>
+<p>Затем, примонтируем к приложению статические файлы. Сейчас они будут представлены только фото, но позже будем работать и со стилями:</p>
+<pre><code class="lang-py">app.mount('/static', StaticFiles(directory='app/static'), 'static')</code></pre>
+<p>Эта строка настраивает приложение FastAPI для обслуживания статических файлов:</p>
+<ul>
+    <li>app.mount: Метод mount позволяет «вмонтировать» под‑приложение в приложение FastAPI. В этом случае под‑приложение, которое монтируется, это объект StaticFiles.</li>
+    <li>'/static': Это путь, по которому будут доступны статические файлы. В данном случае, все запросы к пути, начинающемуся с /static, будут обслуживаться этим под‑приложением. Например, если у вас есть файл image.png в директории app/static, он будет доступен по URL http://yourdomain/static/image.png.</li>
+    <li>StaticFiles(directory='app/static'): StaticFiles — это класс из модуля fastapi.staticfiles, который используется для работы со статическими файлами. Параметр directory='app/static' указывает путь к директории, где хранятся статические файлы. Эти файлы будут доступны через указанный выше путь (/static).</li>
+    <li>'static': Это имя маршрута, которое можно использовать для идентификации и ссылок на этот маршрут. В этом случае, оно не обязательно для функционирования, но может быть полезно для внутреннего управления и ссылок.</li>
+</ul>
+<p>Теперь, когда статика готова, можно перейти к оформлению html-страницы со студентами. Опишем файл стилей (static/style/styles.css):</p>
+<pre><code class="lang-css">.student-card {
+    border: 1px solid #ddd;
+    padding: 10px;
+    margin-bottom: 20px;
+    border-radius: 5px;
+    display: flex;
+    align-items: center;
+}
+
+.student-card img {
+    width: 100px;
+    height: 100px;
+    object-fit: cover;
+    border-radius: 50%;
+    margin-right: 15px;
+}
+
+.student-card .details {
+    flex-grow: 1;
+}
+
+.student-card a {
+    display: inline-block;
+    padding: 10px 20px;
+    border: none;
+    background-color: #007bff;
+    color: white;
+    border-radius: 5px;
+    text-decoration: none;
+}
+
+.student-card a:hover {
+    background-color: #0056b3;
+}
+</code></pre>
+<p>Эти стили формируют карточку студента с круглым изображением слева и текстовой частью справа. Текстовая часть расширяется, чтобы занять доступное пространство, а справа от карточки находится кнопка (ссылка), которая выделяется ярким синим цветом и меняет цвет при наведении курсора. Изменим HTML шаблон:</p>
+<pre><code class="lang-markup">&lt;!doctype html&gt;
+&lt;html lang="ru"&gt;
+&lt;head&gt;
+    &lt;meta charset="UTF-8"&gt;
+    &lt;meta name="viewport" content="width=device-width, initial-scale=1.0"&gt;
+    &lt;title&gt;Все студенты&lt;/title&gt;
+    &lt;link rel="stylesheet" type="text/css" href="/static/style/styles.css"&gt;
+&lt;/head&gt;
+&lt;body&gt;
+    &lt;h1&gt;Список студентов&lt;/h1&gt;
+    &lt;div&gt;
+        {% for student in students %}
+        &lt;div class="student-card"&gt;
+            &lt;img src="/static/images/{{ student.id }}.webp" alt="Фото студента"&gt;
+            &lt;div class="details"&gt;
+                &lt;h2&gt;ID: {{ student.id }}&lt;/h2&gt;
+                &lt;p&gt;Полное имя: {{ student.first_name }} {{ student.last_name }}&lt;/p&gt;
+                &lt;p&gt;Email: {{ student.email }}&lt;/p&gt;
+                &lt;p&gt;Специальность: {{ student.major }}&lt;/p&gt;
+                &lt;p&gt;Курс: {{ student.course }}&lt;/p&gt;
+                &lt;!-- Добавьте другие атрибуты по вашему усмотрению --&gt;
+            &lt;/div&gt;
+            &lt;a href="/students/{{ student.id }}"&gt;Смотреть всю информацию&lt;/a&gt;
+        &lt;/div&gt;
+        {% endfor %}
+    &lt;/div&gt;
+&lt;/body&gt;
+&lt;/html&gt;
+</code></pre>
