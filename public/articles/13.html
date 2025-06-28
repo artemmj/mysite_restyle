@@ -1181,3 +1181,116 @@ async def add_student_photo(file: UploadFile, image_name: str):
 &lt;/body&gt;
 &lt;/html&gt;
 </code></pre>
+<p>Опишем стили в файл student.css:</p>
+<pre><code class="lang-css">body {
+    font-family: Arial, sans-serif;
+    margin: 0;
+    padding: 20px;
+    background-color: #f5f5f5;
+}
+
+.container {
+    max-width: 800px;
+    margin: 0 auto;
+    padding: 20px;
+    background-color: #fff;
+    border-radius: 8px;
+    box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+}
+
+h1 {
+    font-size: 24px;
+    color: #333;
+    margin-bottom: 20px;
+}
+
+.student-profile {
+    display: flex;
+    align-items: center;
+    border-bottom: 1px solid #ddd;
+    padding-bottom: 20px;
+    margin-bottom: 20px;
+}
+
+.student-profile img {
+    width: 150px;
+    height: 150px;
+    object-fit: cover;
+    border-radius: 50%;
+    margin-right: 20px;
+}
+
+.student-info {
+    flex-grow: 1;
+}
+
+.student-info h2 {
+    margin: 0;
+    font-size: 22px;
+    color: #333;
+}
+
+.student-info p {
+    margin: 5px 0;
+    font-size: 16px;
+    color: #555;
+} 
+
+.back-link {
+    display: inline-block;
+    padding: 10px 20px;
+    border: none;
+    background-color: #007bff;
+    color: white;
+    border-radius: 5px;
+    text-decoration: none;
+    margin-top: 20px;
+}
+
+.back-link:hover {
+    background-color: #0056b3;
+}</code></pre>
+<p>Далее создадим HTML шаблон:</p>
+<pre><code class="lang-markup">&lt;!doctype html&gt;
+&lt;html lang="ru"&gt;
+&lt;head&gt;
+    &lt;meta charset="UTF-8"&gt;
+    &lt;meta name="viewport" content="width=device-width, initial-scale=1.0"&gt;
+    &lt;title&gt;Информация о студенте&lt;/title&gt;
+    &lt;link rel="stylesheet" type="text/css" href="/static/style/student.css"&gt;
+&lt;/head&gt;
+&lt;body&gt;
+    &lt;div class="container"&gt;
+        &lt;h1&gt;Информация о студенте&lt;/h1&gt;
+        &lt;div class="student-profile"&gt;
+            &lt;img src="/static/images/{{ student.id }}.webp" alt="Фото студента"&gt;
+            &lt;div class="student-info"&gt;
+                &lt;h2&gt;ID: {{ student.id }}&lt;/h2&gt;
+                &lt;p&gt;&lt;strong&gt;Полное имя:&lt;/strong&gt; {{ student.first_name }} {{ student.last_name }}&lt;/p&gt;
+                &lt;p&gt;&lt;strong&gt;Email:&lt;/strong&gt; {{ student.email }}&lt;/p&gt;
+                &lt;p&gt;&lt;strong&gt;Дата рождения:&lt;/strong&gt; {{ student.date_of_birth }}&lt;/p&gt;
+                &lt;p&gt;&lt;strong&gt;Адрес:&lt;/strong&gt; {{ student.address }}&lt;/p&gt;
+                &lt;p&gt;&lt;strong&gt;Год поступления:&lt;/strong&gt; {{ student.enrollment_year }}&lt;/p&gt;
+                &lt;p&gt;&lt;strong&gt;Курс:&lt;/strong&gt; {{ student.course }}&lt;/p&gt;
+                &lt;p&gt;&lt;strong&gt;Специальность:&lt;/strong&gt; {{ student.major }}&lt;/p&gt;
+                &lt;p&gt;&lt;strong&gt;Специальные заметки:&lt;/strong&gt; {{ student.special_notes }}&lt;/p&gt;
+            &lt;/div&gt;
+        &lt;/div&gt;
+        &lt;a href="/pages/students" class="back-link"&gt;Вернуться к списку студентов&lt;/a&gt;
+    &lt;/div&gt;
+&lt;/body&gt;
+&lt;/html&gt;
+</code></pre>
+<p>Остается настроить эндпоинт, который будет возвращать этот HTML шаблон:</p>
+<pre><code class="lang-py">@router.get('/students/{id}')
+async def get_students_html(request: Request, student=Depends(get_student_by_id)):
+    return templates.TemplateResponse(
+        name='student.html',
+        context={
+            'request': request,
+            'student': student,
+        }
+    )
+</code></pre>
+<p>В данном случае происходит настоящая магия, ведь мы никак не указывали явно, что в get_student_by_id должен подставиться id, но это происходит. В FastAPI, когда вы используете зависимость с помощью Depends(), она автоматически обрабатывает зависимость на основе параметров запроса и функции зависимости. В результате, функция get_student_by_id корректно получает параметр id от FastAPI и возвращает данные, которые затем передаются в шаблон для рендеринга.</p>
+<p><b>Регистрация пользователя</b></p>
