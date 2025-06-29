@@ -2,12 +2,13 @@
     <div class="home">
         <div v-if="loading" class="loading">Loading...</div>
         <div v-else-if="error" class="error">{{ error }}</div>
-        <div v-else>
-        <ArticleCard 
-            v-for="article in articles" 
-            :key="article.id" 
-            :article="article"
-        />
+        <div v-else class="articles-grid">
+            <ArticleCard 
+                v-for="article in articles" 
+                :key="article.id" 
+                :article="article"
+                class="article-card"
+            />
         </div>
     </div>
 </template>
@@ -42,7 +43,7 @@ onMounted(async () => {
 
 <style scoped lang="scss">
 .home {
-    max-width: 800px;
+    max-width: 1200px;
     margin: 2rem auto;
     padding: 0 1rem;
 }
@@ -52,5 +53,22 @@ onMounted(async () => {
     font-size: 1.2rem;
     padding: 2rem;
     color: #7f8c8d;
+}
+
+.articles-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(400px, 1fr));
+    gap: 0.5rem;
+}
+
+@media (max-width: 768px) {
+    .articles-grid {
+        grid-template-columns: 1fr;
+        gap: 1rem;
+    }
+    
+    .home {
+        padding: 0 0.75rem;
+    }
 }
 </style>
